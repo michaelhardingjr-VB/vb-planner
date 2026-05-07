@@ -1618,10 +1618,21 @@ function selectCoach(name, existing) {
 async function initSheets() {
   setLoading('Connecting to database...');
   try {
-    const [allFromSheets, coaches] = await Promise.all([
-      apiGet('getAll'),
-      apiGet('getCoaches')
-    ]);
+    // Run independently so one failure doesn't kill the other
+    let allFromSheets = [];
+    let coaches = [];
+
+    try {
+      allFromSheets = await apiGet('getAll');
+    } catch(e) {
+      console.warn('getAll failed:', e);
+    }
+
+    try {
+      coaches = await apiGet('getCoaches');
+    } catch(e) {
+      console.warn('getCoaches failed:', e);
+    }
 
     allCoaches = coaches || [];
 
@@ -1633,20 +1644,33 @@ async function initSheets() {
         if (idx > -1) DRILLS[idx] = { ...sd, custom: false };
       });
       customDrills = custom;
-    } else {
+      sheetsReady = true;
+    } else if (allFromSheets !== null) {
+      // getAll succeeded but returned empty — first run, initialize
       setLoading('First run: initializing database...');
-      await apiPost({ action: 'initBuiltIn', drills: DRILLS });
+      try {
+        await apiPost({ action: 'initBuiltIn', drills: DRILLS });
+        sheetsReady = true;
+      } catch(e) {
+        console.warn('initBuiltIn failed:', e);
+        sheetsError = true;
+      }
       customDrills = [];
+    } else {
+      sheetsError = true;
     }
 
-    sheetsReady = true;
   } catch(e) {
     sheetsError = true;
     console.warn('Sheets unavailable, running offline:', e);
+  }
+
+  // Always fall back to localStorage for custom drills if offline
+  if (sheetsError || !sheetsReady) {
     try {
       const raw = localStorage.getItem('vb_custom_drills');
       if (raw) customDrills = JSON.parse(raw);
-    } catch(e2) {}
+    } catch(e) {}
   }
 
   setLoading(null);
