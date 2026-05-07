@@ -1713,48 +1713,104 @@ async function deleteCustomDrill(name) {
   }
 }
 
-// ── Plan persistence (still localStorage — fast and sufficient) ──
-function savePlan() {
+// ── Plan persistence — Google Sheets ─────────────────────────
+async function savePlan() {
   const data = {
     planItems: plan.map(p => ({ name: p.name, planDur: p.planDur })),
     startTime: document.getElementById('start-time').value
   };
+
+  // Always save to localStorage as instant backup
   localStorage.setItem('vb_practice_plan', JSON.stringify(data));
+
   const flash = document.getElementById('saved-flash');
-  flash.textContent = 'Saved!';
+  flash.textContent = 'Saving...';
   flash.classList.add('show');
-  setTimeout(() => flash.classList.remove('show'), 2000);
+
+  if (sheetsReady) {
+    try {
+      await apiPost({ action: 'savePlan', plan: data.planItems, startTime: data.startTime });
+      flash.textContent = '✓ Saved to cloud!';
+    } catch(e) {
+      flash.textContent = '✓ Saved locally';
+      console.warn('Sheets plan save failed, saved locally:', e);
+    }
+  } else {
+    flash.textContent = '✓ Saved locally';
+  }
+
+  setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2500);
 }
 
-function loadPlan() {
+async function loadPlan() {
+  const flash = document.getElementById('saved-flash');
+
+  if (sheetsReady) {
+    flash.textContent = 'Loading...';
+    flash.classList.add('show');
+    try {
+      const data = await apiGet('getPlan');
+      if (!data.planItems || !data.planItems.length) {
+        flash.textContent = 'No saved plan';
+        setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2000);
+        return;
+      }
+      applyPlanData(data);
+      flash.textContent = `✓ Loaded ${data.planItems.length} drills!`;
+      setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2500);
+      return;
+    } catch(e) {
+      console.warn('Sheets load failed, falling back to localStorage:', e);
+    }
+  }
+
+  // Fallback to localStorage
   const raw = localStorage.getItem('vb_practice_plan');
   if (!raw) { alert('No saved plan found.'); return; }
   try {
     const data = JSON.parse(raw);
-    const items = data.planItems || data.plan || [];
-    if (!items.length) { alert('Saved plan is empty.'); return; }
-    const loaded = [];
-    const missing = [];
-    for (const item of items) {
-      const drill = getAllDrills().find(d => d.name === item.name);
-      if (drill) loaded.push({ ...drill, planDur: item.planDur ?? item.dur ?? drill.dur });
-      else missing.push(item.name);
-    }
-    plan = loaded;
-    if (data.startTime) document.getElementById('start-time').value = data.startTime;
-    render();
-    renderPlan();
-    const flash = document.getElementById('saved-flash');
-    flash.textContent = `Loaded ${loaded.length} drills!`;
+    applyPlanData(data);
+    flash.textContent = `✓ Loaded ${plan.length} drills!`;
     flash.classList.add('show');
     setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2500);
-    if (missing.length) alert(`Could not find ${missing.length} drill(s): ${missing.join(', ')}`);
   } catch(e) {
     alert('Failed to load saved plan.');
   }
 }
 
+function applyPlanData(data) {
+  const items = data.planItems || data.plan || [];
+  const loaded = [];
+  for (const item of items) {
+    const drill = getAllDrills().find(d => d.name === item.name);
+    if (drill) loaded.push({ ...drill, planDur: item.planDur ?? item.dur ?? drill.dur });
+  }
+  plan = loaded;
+  if (data.startTime) document.getElementById('start-time').value = data.startTime;
+  render();
+  renderPlan();
+}
+
 function loadSavedPlan() {
+  // On startup, silently load plan from Sheets if available
+  // (called after initSheets completes)
+  if (sheetsReady) {
+    apiGet('getPlan').then(data => {
+      if (data.planItems && data.planItems.length > 0) {
+        if (confirm(`Load your last saved plan? (${data.planItems.length} drills)`)) {
+          applyPlanData(data);
+        }
+      }
+    }).catch(() => {
+      // Fall back to localStorage silently
+      _loadPlanFromLocalStorage();
+    });
+  } else {
+    _loadPlanFromLocalStorage();
+  }
+}
+
+function _loadPlanFromLocalStorage() {
   const raw = localStorage.getItem('vb_practice_plan');
   if (!raw) return;
   try {
@@ -1762,15 +1818,7 @@ function loadSavedPlan() {
     const items = data.planItems || data.plan || [];
     if (items.length > 0) {
       if (confirm(`Load your last saved plan? (${items.length} drills)`)) {
-        const loaded = [];
-        for (const item of items) {
-          const drill = getAllDrills().find(d => d.name === item.name);
-          if (drill) loaded.push({ ...drill, planDur: item.planDur ?? item.dur ?? drill.dur });
-        }
-        plan = loaded;
-        if (data.startTime) document.getElementById('start-time').value = data.startTime;
-        render();
-        renderPlan();
+        applyPlanData(data);
       }
     }
   } catch(e) {}
