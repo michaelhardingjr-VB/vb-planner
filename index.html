@@ -739,11 +739,9 @@ header {
       <button class="btn-ghost" onclick="clearPlan()">Clear</button>
     </div>
     <div class="save-bar">
-      <span class="save-label">Plan</span>
       <button class="btn-save" onclick="savePlan()">💾 Save</button>
-      <button class="btn-save" onclick="loadPlan()">📂 Load</button>
-      <span class="save-label" style="margin-left:8px;">Library</span>
-      <button class="btn-save" onclick="exportFile()" title="Download updated HTML file with all drill edits baked in">📤 Export</button>
+      <button class="btn-save" onclick="setTab('history')">📋 History</button>
+      <button class="btn-save" onclick="exportPlanToSheets()" title="Export current plan to Google Sheets">📤 Export</button>
       <span class="saved-flash" id="saved-flash">Saved!</span>
     </div>
   </div>
@@ -1919,43 +1917,166 @@ async function loadSavedPlan() {
   } catch(e) {}
 }
 
-function exportFile() {
-  const allDrills = getAllDrills();
-  const entries = allDrills.map(d => {
-    const s = d.sections && Object.keys(d.sections).length ? d.sections : { instructions: d.desc || '' };
-    return (
-      `  {name:${JSON.stringify(d.name)},cat:${JSON.stringify(d.cat)},` +
-      `dur:${d.dur},desc:${JSON.stringify(d.desc || '')},` +
-      `sections:${JSON.stringify(s)},` +
-      `url:${JSON.stringify(d.url || null)},notes:${JSON.stringify(d.notes || null)}` +
-      (d.custom ? ',custom:true' : '') + `}`
-    );
+function exportPlanToSheets() {
+  if (!plan.length) { alert('No drills in your current plan to export.'); return; }
+
+  // Show a small picker
+  const existing = document.getElementById('export-picker');
+  if (existing) { existing.remove(); return; }
+
+  const picker = document.createElement('div');
+  picker.id = 'export-picker';
+  picker.style.cssText = `
+    position:fixed;bottom:80px;right:20px;
+    background:var(--panel-bg);border:1px solid var(--border);border-radius:10px;
+    padding:16px;z-index:500;display:flex;flex-direction:column;gap:10px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.5);min-width:200px;
+  `;
+  picker.innerHTML = `
+    <div style="font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;
+                letter-spacing:2px;text-transform:uppercase;color:var(--gray);margin-bottom:4px;">
+      Export Plan As
+    </div>
+    <button onclick="exportAsCSV();document.getElementById('export-picker').remove();"
+      style="background:var(--card-bg);border:1px solid var(--border);border-radius:7px;
+             color:var(--sand);font-family:'Barlow Condensed',sans-serif;font-size:15px;
+             font-weight:700;padding:10px 14px;cursor:pointer;text-align:left;transition:all 0.15s;"
+      onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+      onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--sand)'">
+      📊 Excel / Google Sheets (.csv)
+    </button>
+    <button onclick="exportAsPDF();document.getElementById('export-picker').remove();"
+      style="background:var(--card-bg);border:1px solid var(--border);border-radius:7px;
+             color:var(--sand);font-family:'Barlow Condensed',sans-serif;font-size:15px;
+             font-weight:700;padding:10px 14px;cursor:pointer;text-align:left;transition:all 0.15s;"
+      onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+      onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--sand)'">
+      🖨️ Print / Save as PDF
+    </button>
+    <button onclick="document.getElementById('export-picker').remove();"
+      style="background:none;border:none;color:var(--gray);font-size:12px;cursor:pointer;text-align:center;">
+      Cancel
+    </button>
+  `;
+  document.body.appendChild(picker);
+
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', function handler(e) {
+      if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', handler); }
+    });
+  }, 100);
+}
+
+function exportAsCSV() {
+  const sched = calcSchedule();
+  const date  = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const totalMins = plan.reduce((s,p) => s+p.planDur, 0);
+
+  const rows = [
+    ['Mike\'s VB Practice Plan'],
+    [`Coach: ${currentCoach || 'Unknown'}`, `Date: ${date}`, `Total: ${totalMins} mins`],
+    [],
+    ['#', 'Time', 'Drill', 'Category', 'Duration (min)', 'Purpose', 'Setup', 'Run the Drill', 'Coaching Points', 'Variations', 'Reference']
+  ];
+
+  sched.forEach((p, i) => {
+    const s = p.sections || {};
+    rows.push([
+      i + 1,
+      `${p.startTime} → ${p.endTime}`,
+      p.name,
+      p.cat,
+      p.planDur,
+      s['PURPOSE'] || '',
+      s['SETUP'] || '',
+      s['RUN THE DRILL'] || p.desc || '',
+      s['COACHING POINTS'] || '',
+      s['VARIATIONS'] || '',
+      p.url || p.notes || ''
+    ]);
   });
-  const newDrillsJS = 'const DRILLS = [\n' + entries.join(',\n') + '\n];';
-  const html = document.documentElement.outerHTML;
-  const start = html.indexOf('const DRILLS = [');
-  if (start === -1) { alert('Could not find drill data to export.'); return; }
-  let pos = start + 'const DRILLS = ['.length;
-  let depth = 1; let inStr = false; let esc = false;
-  while (pos < html.length && depth > 0) {
-    const c = html[pos];
-    if (esc) { esc = false; }
-    else if (c === '\\' && inStr) { esc = true; }
-    else if (c === '"' && !esc) { inStr = !inStr; }
-    else if (!inStr) {
-      if (c === '[' || c === '{') depth++;
-      else if (c === ']' || c === '}') depth--;
-    }
-    pos++;
-  }
-  if (html[pos] === ';') pos++;
-  const newHtml = html.slice(0, start) + newDrillsJS + html.slice(pos);
-  const blob = new Blob([newHtml], { type: 'text/html' });
+
+  const csv = rows.map(row =>
+    row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+  ).join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'MikesVBPracticePlanner.html';
+  a.download = `PracticePlan_${currentCoach}_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function exportAsPDF() {
+  // Open a clean print window with the practice schedule
+  const sched  = calcSchedule();
+  const date   = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+  const totalMins = plan.reduce((s,p) => s+p.planDur, 0);
+
+  const rows = sched.map((p, i) => {
+    const s = p.sections || {};
+    const sections = [
+      s['PURPOSE']         ? `<div class="sec"><span class="sec-lbl">PURPOSE</span> ${s['PURPOSE']}</div>` : '',
+      s['SETUP']           ? `<div class="sec"><span class="sec-lbl">SETUP</span> ${s['SETUP']}</div>` : '',
+      s['RUN THE DRILL']   ? `<div class="sec"><span class="sec-lbl">RUN THE DRILL</span> ${s['RUN THE DRILL']}</div>` : (p.desc ? `<div class="sec">${p.desc}</div>` : ''),
+      s['COACHING POINTS'] ? `<div class="sec"><span class="sec-lbl">COACHING POINTS</span> ${s['COACHING POINTS']}</div>` : '',
+      s['VARIATIONS']      ? `<div class="sec"><span class="sec-lbl">VARIATIONS</span> ${s['VARIATIONS']}</div>` : '',
+    ].filter(Boolean).join('');
+
+    return `
+      <tr>
+        <td class="time">${p.startTime}</td>
+        <td class="drill-cell">
+          <div class="drill-name">${i+1}. ${p.name}</div>
+          <div class="cat-badge" style="background:${catColor(p.cat)}22;color:${catColor(p.cat)};border:1px solid ${catColor(p.cat)}55">${p.cat}</div>
+          <div class="sections">${sections}</div>
+          ${(p.url||p.notes) ? `<div class="ref">🔗 ${p.url||p.notes}</div>` : ''}
+        </td>
+        <td class="dur">${p.planDur}m</td>
+      </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Practice Plan — ${currentCoach} — ${date}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@400;500&display=swap');
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Barlow',sans-serif; color:#111; padding:32px; font-size:12px; }
+    .header { margin-bottom:20px; border-bottom:3px solid #1a2a4a; padding-bottom:12px; }
+    .header h1 { font-family:'Barlow Condensed',sans-serif; font-size:28px; font-weight:900; color:#1a2a4a; text-transform:uppercase; letter-spacing:2px; }
+    .header .meta { font-family:'Barlow Condensed',sans-serif; font-size:14px; color:#555; margin-top:4px; letter-spacing:1px; }
+    table { width:100%; border-collapse:collapse; }
+    th { font-family:'Barlow Condensed',sans-serif; font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#555; border-bottom:2px solid #ddd; padding:6px 10px; text-align:left; }
+    td { padding:12px 10px; border-bottom:1px solid #eee; vertical-align:top; }
+    .time { font-family:'Barlow Condensed',sans-serif; font-size:16px; font-weight:700; color:#1a2a4a; white-space:nowrap; width:90px; }
+    .drill-name { font-family:'Barlow Condensed',sans-serif; font-size:18px; font-weight:800; color:#111; margin-bottom:4px; }
+    .cat-badge { display:inline-block; font-family:'Barlow Condensed',sans-serif; font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase; padding:2px 8px; border-radius:4px; margin-bottom:6px; }
+    .sections { margin-top:4px; }
+    .sec { margin-bottom:5px; font-size:11px; line-height:1.6; color:#333; }
+    .sec-lbl { font-family:'Barlow Condensed',sans-serif; font-size:10px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; color:#1a2a4a; margin-right:4px; }
+    .ref { font-size:10px; color:#1a2a4a; margin-top:4px; }
+    .dur { font-family:'Barlow Condensed',sans-serif; font-size:18px; font-weight:700; color:#555; text-align:right; white-space:nowrap; width:50px; }
+    tr { page-break-inside:avoid; }
+    @media print { body { padding:16px; } }
+  </style>
+  </head><body>
+  <div class="header">
+    <h1>Practice Plan</h1>
+    <div class="meta">Coach: ${currentCoach || 'Unknown'} &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; ${sched[0]?.startTime||''} → ${sched[sched.length-1]?.endTime||''} &nbsp;·&nbsp; ${plan.length} drills &nbsp;·&nbsp; ${totalMins} mins</div>
+  </div>
+  <table>
+    <thead><tr><th>Time</th><th>Drill</th><th>Dur</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  </body></html>`;
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
 }
 
 // ============================================================
@@ -1977,31 +2098,69 @@ document.addEventListener('keydown', e => {
 window.addEventListener('load', () => { initSheets(); });
 
 // ── History view ──────────────────────────────────────────────
+let cachedHistory = [];
+
 async function renderHistory() {
   const el = document.getElementById('history-view');
   el.innerHTML = `<div style="padding:28px;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:16px;">Loading...</div>`;
   if (!sheetsReady) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:18px;">History requires a database connection.</div>`; return; }
   try {
     const history = await apiGet('getHistory', { coach: currentCoach });
-    if (!history || !history.length) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:18px;">No history yet. Save a practice plan to start tracking!</div>`; return; }
+    cachedHistory = history || [];
+    if (!cachedHistory.length) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:18px;">No history yet. Save a practice plan to start tracking!</div>`; return; }
     el.innerHTML = `<div style="padding:28px;width:100%;">
       <div style="font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--white);margin-bottom:4px;">PRACTICE HISTORY</div>
-      <div style="font-size:13px;color:var(--gray);margin-bottom:24px;">${currentCoach} · ${history.length} sessions</div>
+      <div style="font-size:13px;color:var(--gray);margin-bottom:24px;">${currentCoach} · ${cachedHistory.length} sessions</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
-        ${history.map(h => `
+        ${cachedHistory.map((h, i) => `
           <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:16px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
               <div style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;color:var(--white);">${h.date}</div>
-              <div style="display:flex;gap:16px;">
-                <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:900;color:var(--accent);">${h.drillCount}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Drills</div></div>
-                <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:900;color:var(--accent);">${h.totalMins}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Mins</div></div>
-                <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:900;color:var(--accent);">${h.startTime||'—'}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Start</div></div>
+              <div style="display:flex;align-items:center;gap:16px;">
+                <div style="display:flex;gap:16px;">
+                  <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:900;color:var(--accent);">${h.drillCount}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Drills</div></div>
+                  <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:900;color:var(--accent);">${h.totalMins}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Mins</div></div>
+                  <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:900;color:var(--accent);">${h.startTime||'—'}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Start</div></div>
+                </div>
+                <button onclick="loadFromHistory(${i})"
+                  style="background:var(--accent);color:var(--panel-bg);border:none;border-radius:6px;
+                         font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:800;
+                         letter-spacing:1px;text-transform:uppercase;padding:7px 14px;cursor:pointer;
+                         white-space:nowrap;transition:all 0.15s;"
+                  onmouseover="this.style.background='#ffd740'"
+                  onmouseout="this.style.background='var(--accent)'">
+                  ▶ Load Plan
+                </button>
               </div>
             </div>
             <div style="font-size:12px;color:var(--sand-dim);line-height:1.6;">${(h.drills||[]).join(' · ')}</div>
           </div>`).join('')}
       </div></div>`;
   } catch(e) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--red);">Failed to load history.</div>`; }
+}
+
+function loadFromHistory(index) {
+  const h = cachedHistory[index];
+  if (!h || !h.drills || !h.drills.length) { alert('No drills in this session.'); return; }
+  if (!confirm(`Load practice from ${h.date}? (${h.drills.length} drills)\nThis will replace your current plan.`)) return;
+
+  const loaded = [];
+  const missing = [];
+  h.drills.forEach(name => {
+    const drill = getAllDrills().find(d => d.name === name);
+    if (drill) loaded.push({ ...drill, planDur: drill.dur });
+    else missing.push(name);
+  });
+
+  plan = loaded;
+  if (h.startTime) document.getElementById('start-time').value = h.startTime;
+  render();
+  renderPlan();
+
+  if (missing.length) alert(`Note: ${missing.length} drill(s) not found: ${missing.join(', ')}`);
+
+  // Switch to schedule tab to show the loaded plan
+  setTab('schedule');
 }
 
 // ── Staff view ────────────────────────────────────────────────
