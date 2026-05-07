@@ -2209,14 +2209,14 @@ async function deleteHistoryEntry(index) {
   if (!h) return;
   if (!confirm(`Delete practice from ${h.date}?\nThis cannot be undone.`)) return;
 
-  // Remove from cache immediately and re-render without fetching
+  // Remove from cache immediately and re-render
   cachedHistory.splice(index, 1);
   renderHistory(true);
 
-  // Delete from Sheets in background
+  // Delete from Sheets by coach + date
   if (sheetsReady) {
     try {
-      await apiPost({ action: 'deleteHistory', coach: currentCoach, date: h.date, index });
+      await apiPost({ action: 'deleteHistory', coach: currentCoach, date: h.date });
     } catch(e) {
       console.warn('Failed to delete from Sheets:', e);
     }
