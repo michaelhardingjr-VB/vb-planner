@@ -2216,10 +2216,16 @@ async function deleteHistoryEntry(index) {
   // Delete from Sheets by coach + date
   if (sheetsReady) {
     try {
-      await apiPost({ action: 'deleteHistory', coach: currentCoach, date: h.date });
+      const payload = { action: 'deleteHistory', coach: currentCoach, date: String(h.date) };
+      console.log('Deleting history:', payload);
+      const result = await apiPost(payload);
+      console.log('Delete result:', result);
     } catch(e) {
-      console.warn('Failed to delete from Sheets:', e);
+      console.error('Failed to delete from Sheets:', e);
+      alert('Delete failed: ' + e.message);
     }
+  } else {
+    alert('Not connected to database — delete only removed from view.');
   }
 }
 
