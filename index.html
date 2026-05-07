@@ -682,6 +682,8 @@ header {
   <div class="tab" id="tab-schedule" onclick="setTab('schedule')">
     Practice Schedule <span class="tab-badge" id="plan-count-badge">0</span>
   </div>
+  <div class="tab" id="tab-history" onclick="setTab('history')">History</div>
+  <div class="tab" id="tab-staff" onclick="setTab('staff')">Staff</div>
 </div>
 
 <!-- DRILLS VIEW -->
@@ -750,6 +752,16 @@ header {
 <!-- SCHEDULE VIEW -->
 <div class="main" id="main-schedule" style="display:none;">
   <div class="schedule-view" id="schedule-view"></div>
+</div>
+
+<!-- HISTORY VIEW -->
+<div class="main" id="main-history" style="display:none;">
+  <div class="schedule-view" id="history-view"></div>
+</div>
+
+<!-- STAFF VIEW -->
+<div class="main" id="main-staff" style="display:none;">
+  <div class="schedule-view" id="staff-view"></div>
 </div>
 
 <!-- MODAL -->
@@ -1139,11 +1151,14 @@ function getFiltered() {
 // ============================================================
 function setTab(tab) {
   activeTab = tab;
-  document.getElementById('tab-drills').className = 'tab' + (tab==='drills'?' active':'');
-  document.getElementById('tab-schedule').className = 'tab' + (tab==='schedule'?' active':'');
-  document.getElementById('main-drills').style.display = tab==='drills'?'flex':'none';
-  document.getElementById('main-schedule').style.display = tab==='schedule'?'flex':'none';
+  ['drills','schedule','history','staff'].forEach(t => {
+    document.getElementById(`tab-${t}`).className = 'tab' + (t===tab?' active':'');
+    const el = document.getElementById(`main-${t}`);
+    if (el) el.style.display = t===tab ? 'flex' : 'none';
+  });
   if (tab==='schedule') renderSchedule();
+  if (tab==='history')  renderHistory();
+  if (tab==='staff')    renderStaff();
 }
 
 function buildCatList() {
@@ -1470,11 +1485,13 @@ function renderSchedule() {
 // ============================================================
 const API_URL = 'https://script.google.com/macros/s/AKfycbwdSaY_6JsjagsRLCYqRL2j7FDzCUsJxiXb-sEqhY_y5DjJ5f9fIJUtcdmMMImFOvE9/exec';
 
-let customDrills = []; // loaded from Sheets
+let customDrills = [];
 let sheetsReady  = false;
 let sheetsError  = false;
+let currentCoach = localStorage.getItem('vb_coach_name') || '';
+let allCoaches   = [];
 
-// Show/hide a loading overlay
+// ── Loading overlay ───────────────────────────────────────────
 function setLoading(msg) {
   let el = document.getElementById('loading-overlay');
   if (!el) {
@@ -1496,47 +1513,129 @@ function setLoading(msg) {
   }
 }
 
-async function apiGet(action) {
-  const res = await fetch(`${API_URL}?action=${action}`);
+// ── API helpers ───────────────────────────────────────────────
+async function apiGet(action, params) {
+  let url = `${API_URL}?action=${action}`;
+  if (params) Object.entries(params).forEach(([k,v]) => url += `&${k}=${encodeURIComponent(v)}`);
+  const res  = await fetch(url);
   const data = await res.json();
   if (!data.ok) throw new Error(data.error);
   return data.data;
 }
 
 async function apiPost(body) {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    body: JSON.stringify(body)
-  });
+  const res  = await fetch(API_URL, { method: 'POST', body: JSON.stringify(body) });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error);
   return data.data;
 }
 
 function getAllDrills() {
-  return [...DRILLS, ...customDrills];
+  // Show custom drills for current coach + all built-ins
+  const myCustom = customDrills.filter(d => !d.coach || d.coach === currentCoach);
+  return [...DRILLS, ...myCustom];
 }
 
+// ── Coach selection ───────────────────────────────────────────
+function showCoachSelector(coaches) {
+  const overlay = document.createElement('div');
+  overlay.id = 'coach-overlay';
+  overlay.style.cssText = `
+    position:fixed;inset:0;background:rgba(10,20,37,0.97);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    z-index:1000;font-family:'Barlow Condensed',sans-serif;gap:16px;padding:20px;
+  `;
+  overlay.innerHTML = `
+    <div style="font-size:40px;">🏐</div>
+    <div style="font-size:28px;font-weight:900;color:#f5c518;letter-spacing:2px;text-transform:uppercase;">
+      Mike's VB Practice Planner
+    </div>
+    <div style="font-size:15px;color:#a8bcd8;margin-bottom:8px;">Who are you?</div>
+
+    ${coaches.length > 0 ? `
+    <div style="width:100%;max-width:320px;">
+      <div style="font-size:11px;color:#a8bcd8;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Select your name</div>
+      <div id="coach-list" style="display:flex;flex-direction:column;gap:8px;">
+        ${coaches.map(c => `
+          <button onclick="selectCoach('${c.replace(/'/g,"\\'")}',true)"
+            style="background:#132035;border:1px solid rgba(245,197,24,0.3);border-radius:8px;
+                   color:#f0f4ff;font-family:'Barlow Condensed',sans-serif;font-size:17px;
+                   font-weight:700;padding:12px;cursor:pointer;text-align:left;
+                   transition:all 0.15s;"
+            onmouseover="this.style.borderColor='#f5c518';this.style.color='#f5c518'"
+            onmouseout="this.style.borderColor='rgba(245,197,24,0.3)';this.style.color='#f0f4ff'">
+            👤 ${c}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+    <div style="color:#a8bcd8;font-size:13px;margin-top:4px;">— or —</div>
+    ` : ''}
+
+    <div style="width:100%;max-width:320px;">
+      <div style="font-size:11px;color:#a8bcd8;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">
+        ${coaches.length > 0 ? 'Add new coach' : 'Enter your name'}
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="new-coach-input" type="text" placeholder="Your name..."
+          style="flex:1;background:#162438;border:1px solid rgba(245,197,24,0.3);border-radius:6px;
+                 color:#f0f4ff;font-family:'Barlow',sans-serif;font-size:14px;padding:10px 12px;outline:none;"
+          onkeydown="if(event.key==='Enter') addNewCoach()">
+        <button onclick="addNewCoach()"
+          style="background:#f5c518;color:#0a1525;border:none;border-radius:6px;
+                 font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:800;
+                 padding:10px 16px;cursor:pointer;">
+          Go →
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('new-coach-input')?.focus(), 100);
+}
+
+async function addNewCoach() {
+  const input = document.getElementById('new-coach-input');
+  const name  = input?.value.trim();
+  if (!name) return;
+  if (sheetsReady) {
+    try { await apiPost({ action: 'addCoach', name }); } catch(e) {}
+  }
+  selectCoach(name, false);
+}
+
+function selectCoach(name, existing) {
+  currentCoach = name;
+  localStorage.setItem('vb_coach_name', name);
+  const overlay = document.getElementById('coach-overlay');
+  if (overlay) overlay.remove();
+  updateHeaderCount();
+  // Filter custom drills for this coach
+  buildCatList();
+  render();
+  loadSavedPlan();
+}
+
+// ── Init ──────────────────────────────────────────────────────
 async function initSheets() {
   setLoading('Connecting to database...');
   try {
-    // First time: push all built-in drills to Sheets if BuiltIn sheet is empty
-    const allFromSheets = await apiGet('getAll');
+    const [allFromSheets, coaches] = await Promise.all([
+      apiGet('getAll'),
+      apiGet('getCoaches')
+    ]);
 
-    // If Sheets has drills, merge: override DRILLS with Sheets versions
+    allCoaches = coaches || [];
+
     if (allFromSheets && allFromSheets.length > 0) {
       const builtIn = allFromSheets.filter(d => !d.custom);
       const custom  = allFromSheets.filter(d => d.custom);
-
-      // Apply Sheets edits to in-memory DRILLS array
       builtIn.forEach(sd => {
         const idx = DRILLS.findIndex(d => d.name === sd.name);
         if (idx > -1) DRILLS[idx] = { ...sd, custom: false };
       });
-
       customDrills = custom;
     } else {
-      // First run — push all built-in drills to Sheets
       setLoading('First run: initializing database...');
       await apiPost({ action: 'initBuiltIn', drills: DRILLS });
       customDrills = [];
@@ -1546,30 +1645,45 @@ async function initSheets() {
   } catch(e) {
     sheetsError = true;
     console.warn('Sheets unavailable, running offline:', e);
-    // Fall back to localStorage for custom drills
     try {
       const raw = localStorage.getItem('vb_custom_drills');
       if (raw) customDrills = JSON.parse(raw);
     } catch(e2) {}
   }
+
   setLoading(null);
   buildCatList();
   render();
   renderPlan();
   updateHeaderCount();
-  loadSavedPlan();
+
+  // Show coach selector if no coach set
+  if (!currentCoach) {
+    showCoachSelector(allCoaches);
+  } else {
+    loadSavedPlan();
+  }
 }
 
 function updateHeaderCount() {
-  const total = getAllDrills().length;
-  const customCount = customDrills.length;
-  const onlineIndicator = sheetsReady
-    ? `<span style="color:#34d399;font-size:10px;margin-right:8px;">● ${customCount} custom</span>`
+  const total       = getAllDrills().length;
+  const customCount = customDrills.filter(d => !d.coach || d.coach === currentCoach).length;
+  const coachBadge  = currentCoach
+    ? `<span style="color:#f5c518;font-size:11px;margin-right:10px;cursor:pointer;" onclick="switchCoach()" title="Switch coach">👤 ${currentCoach}</span>`
+    : '';
+  const statusDot = sheetsReady
+    ? `<span style="color:#34d399;font-size:10px;margin-right:8px;">●</span>`
     : sheetsError
       ? `<span style="color:#f87171;font-size:10px;margin-right:8px;">● offline</span>`
       : '';
   document.getElementById('header-meta').innerHTML =
-    `${onlineIndicator}${total} Drills · Season Ready`;
+    `${coachBadge}${statusDot}${total} Drills · Season Ready`;
+}
+
+function switchCoach() {
+  currentCoach = '';
+  localStorage.removeItem('vb_coach_name');
+  showCoachSelector(allCoaches);
 }
 
 // ── Drill CRUD ────────────────────────────────────────────────
@@ -1674,9 +1788,8 @@ async function saveDrill() {
       if (editingDrillName && isBuiltIn) {
         await apiPost({ action: 'updateBuiltIn', drill: { ...drill, custom: false } });
       } else {
-        await apiPost({ action: 'saveCustom', drill });
+        await apiPost({ action: 'saveCustom', drill, coach: currentCoach });
       }
-      // Also update localStorage as fallback
       localStorage.setItem('vb_custom_drills', JSON.stringify(customDrills));
     } catch(e) {
       console.warn('Sheets save failed, saved locally only:', e);
@@ -1702,10 +1815,9 @@ async function deleteCustomDrill(name) {
   // Delete from Sheets
   if (sheetsReady) {
     try {
-      await apiPost({ action: 'deleteCustom', name });
+      await apiPost({ action: 'deleteCustom', name, coach: currentCoach });
       localStorage.setItem('vb_custom_drills', JSON.stringify(customDrills));
     } catch(e) {
-      console.warn('Sheets delete failed:', e);
       localStorage.setItem('vb_custom_drills', JSON.stringify(customDrills));
     }
   } else {
@@ -1715,13 +1827,12 @@ async function deleteCustomDrill(name) {
 
 // ── Plan persistence — Google Sheets ─────────────────────────
 async function savePlan() {
+  if (!currentCoach) { showCoachSelector(allCoaches); return; }
   const data = {
     planItems: plan.map(p => ({ name: p.name, planDur: p.planDur })),
     startTime: document.getElementById('start-time').value
   };
-
-  // Always save to localStorage as instant backup
-  localStorage.setItem('vb_practice_plan', JSON.stringify(data));
+  localStorage.setItem(`vb_plan_${currentCoach}`, JSON.stringify(data));
 
   const flash = document.getElementById('saved-flash');
   flash.textContent = 'Saving...';
@@ -1729,27 +1840,26 @@ async function savePlan() {
 
   if (sheetsReady) {
     try {
-      await apiPost({ action: 'savePlan', plan: data.planItems, startTime: data.startTime });
+      await apiPost({ action: 'savePlan', coach: currentCoach, plan: data.planItems, startTime: data.startTime });
       flash.textContent = '✓ Saved to cloud!';
     } catch(e) {
       flash.textContent = '✓ Saved locally';
-      console.warn('Sheets plan save failed, saved locally:', e);
     }
   } else {
     flash.textContent = '✓ Saved locally';
   }
-
   setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2500);
 }
 
 async function loadPlan() {
+  if (!currentCoach) { showCoachSelector(allCoaches); return; }
   const flash = document.getElementById('saved-flash');
 
   if (sheetsReady) {
     flash.textContent = 'Loading...';
     flash.classList.add('show');
     try {
-      const data = await apiGet('getPlan');
+      const data = await apiGet('getPlan', { coach: currentCoach });
       if (!data.planItems || !data.planItems.length) {
         flash.textContent = 'No saved plan';
         setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2000);
@@ -1759,23 +1869,17 @@ async function loadPlan() {
       flash.textContent = `✓ Loaded ${data.planItems.length} drills!`;
       setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2500);
       return;
-    } catch(e) {
-      console.warn('Sheets load failed, falling back to localStorage:', e);
-    }
+    } catch(e) { console.warn('Sheets load failed, using local:', e); }
   }
 
-  // Fallback to localStorage
-  const raw = localStorage.getItem('vb_practice_plan');
+  const raw = localStorage.getItem(`vb_plan_${currentCoach}`);
   if (!raw) { alert('No saved plan found.'); return; }
   try {
-    const data = JSON.parse(raw);
-    applyPlanData(data);
-    flash.textContent = `✓ Loaded ${plan.length} drills!`;
+    applyPlanData(JSON.parse(raw));
+    flash.textContent = `✓ Loaded!`;
     flash.classList.add('show');
     setTimeout(() => { flash.classList.remove('show'); flash.textContent = 'Saved!'; }, 2500);
-  } catch(e) {
-    alert('Failed to load saved plan.');
-  }
+  } catch(e) { alert('Failed to load saved plan.'); }
 }
 
 function applyPlanData(data) {
@@ -1791,35 +1895,26 @@ function applyPlanData(data) {
   renderPlan();
 }
 
-function loadSavedPlan() {
-  // On startup, silently load plan from Sheets if available
-  // (called after initSheets completes)
+async function loadSavedPlan() {
+  if (!currentCoach) return;
   if (sheetsReady) {
-    apiGet('getPlan').then(data => {
+    try {
+      const data = await apiGet('getPlan', { coach: currentCoach });
       if (data.planItems && data.planItems.length > 0) {
-        if (confirm(`Load your last saved plan? (${data.planItems.length} drills)`)) {
+        if (confirm(`Load ${currentCoach}'s last saved plan? (${data.planItems.length} drills)`)) {
           applyPlanData(data);
         }
       }
-    }).catch(() => {
-      // Fall back to localStorage silently
-      _loadPlanFromLocalStorage();
-    });
-  } else {
-    _loadPlanFromLocalStorage();
+      return;
+    } catch(e) {}
   }
-}
-
-function _loadPlanFromLocalStorage() {
-  const raw = localStorage.getItem('vb_practice_plan');
+  const raw = localStorage.getItem(`vb_plan_${currentCoach}`);
   if (!raw) return;
   try {
     const data = JSON.parse(raw);
     const items = data.planItems || data.plan || [];
     if (items.length > 0) {
-      if (confirm(`Load your last saved plan? (${items.length} drills)`)) {
-        applyPlanData(data);
-      }
+      if (confirm(`Load your last saved plan? (${items.length} drills)`)) applyPlanData(data);
     }
   } catch(e) {}
 }
@@ -1881,6 +1976,77 @@ document.addEventListener('keydown', e => {
 // Connect to Sheets on load
 window.addEventListener('load', () => { initSheets(); });
 
+// ── History view ──────────────────────────────────────────────
+async function renderHistory() {
+  const el = document.getElementById('history-view');
+  el.innerHTML = `<div style="padding:28px;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:16px;">Loading...</div>`;
+  if (!sheetsReady) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:18px;">History requires a database connection.</div>`; return; }
+  try {
+    const history = await apiGet('getHistory', { coach: currentCoach });
+    if (!history || !history.length) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:18px;">No history yet. Save a practice plan to start tracking!</div>`; return; }
+    el.innerHTML = `<div style="padding:28px;width:100%;">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--white);margin-bottom:4px;">PRACTICE HISTORY</div>
+      <div style="font-size:13px;color:var(--gray);margin-bottom:24px;">${currentCoach} · ${history.length} sessions</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${history.map(h => `
+          <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;color:var(--white);">${h.date}</div>
+              <div style="display:flex;gap:16px;">
+                <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:900;color:var(--accent);">${h.drillCount}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Drills</div></div>
+                <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:900;color:var(--accent);">${h.totalMins}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Mins</div></div>
+                <div style="text-align:center;"><div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:900;color:var(--accent);">${h.startTime||'—'}</div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;">Start</div></div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:var(--sand-dim);line-height:1.6;">${(h.drills||[]).join(' · ')}</div>
+          </div>`).join('')}
+      </div></div>`;
+  } catch(e) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--red);">Failed to load history.</div>`; }
+}
+
+// ── Staff view ────────────────────────────────────────────────
+async function renderStaff() {
+  const el = document.getElementById('staff-view');
+  el.innerHTML = `<div style="padding:28px;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:16px;">Loading staff data...</div>`;
+  if (!sheetsReady) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--gray);font-family:'Barlow Condensed',sans-serif;font-size:18px;">Staff view requires a database connection.</div>`; return; }
+  try {
+    const [masterPlan, drillUsage] = await Promise.all([apiGet('getMasterPlan'), apiGet('getDrillUsage')]);
+    el.innerHTML = `<div style="padding:28px;width:100%;display:flex;flex-direction:column;gap:28px;">
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--white);margin-bottom:4px;">STAFF PLANS</div>
+        <div style="font-size:13px;color:var(--gray);margin-bottom:16px;">Most recent saved plan per coach</div>
+        ${!masterPlan||!masterPlan.length ? `<div style="color:var(--gray);">No plans saved yet.</div>`
+          : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">
+              ${masterPlan.map(cp=>`
+                <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:16px;">
+                  <div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:800;color:var(--accent);margin-bottom:8px;">👤 ${cp.coach}</div>
+                  <div style="font-size:12px;color:var(--gray);margin-bottom:8px;">${cp.drills.length} drills · ${cp.startTime||''}</div>
+                  <div style="font-size:12px;color:var(--sand-dim);line-height:1.7;">${cp.drills.slice(0,6).map(d=>`• ${d.name} (${d.planDur}m)`).join('<br>')}${cp.drills.length>6?`<br><span style="color:var(--gray);">+${cp.drills.length-6} more</span>`:''}</div>
+                </div>`).join('')}
+            </div>`}
+      </div>
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--white);margin-bottom:4px;">DRILL USAGE</div>
+        <div style="font-size:13px;color:var(--gray);margin-bottom:16px;">Most used drills across all coaches</div>
+        ${!drillUsage||!drillUsage.length ? `<div style="color:var(--gray);">No usage data yet.</div>`
+          : `<div style="display:flex;flex-direction:column;gap:6px;max-width:600px;">
+              ${drillUsage.slice(0,20).map((d,i)=>{
+                const pct=Math.round((d.count/drillUsage[0].count)*100);
+                return `<div style="display:flex;align-items:center;gap:12px;">
+                  <div style="font-family:'Barlow Condensed',sans-serif;font-size:14px;color:var(--gray);width:24px;text-align:right;">${i+1}</div>
+                  <div style="flex:1;">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+                      <span style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;color:var(--white);">${d.name}</span>
+                      <span style="font-family:'Barlow Condensed',sans-serif;font-size:13px;color:var(--accent);">${d.count}x · ${d.coaches} coach${d.coaches!==1?'es':''}</span>
+                    </div>
+                    <div style="height:4px;background:var(--court-mid);border-radius:2px;"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:2px;"></div></div>
+                  </div></div>`;
+              }).join('')}
+            </div>`}
+      </div></div>`;
+  } catch(e) { el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--red);">Failed to load staff data.</div>`; }
+}
+
 // ============================================================
 // INIT
 // ============================================================
@@ -1895,9 +2061,6 @@ document.addEventListener('keydown', e => {
     document.getElementById('add-drill-modal').style.display = 'none';
   }
 });
-
-// Connect to Sheets on load
-window.addEventListener('load', () => { initSheets(); });
 </script>
 </body>
 </html>
