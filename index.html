@@ -2213,19 +2213,13 @@ async function deleteHistoryEntry(index) {
   cachedHistory.splice(index, 1);
   renderHistory(true);
 
-  // Delete from Sheets by coach + date
-  if (sheetsReady) {
+  // Delete from Sheets by unique ID
+  if (sheetsReady && h.id) {
     try {
-      const payload = { action: 'deleteHistory', coach: currentCoach, date: String(h.date) };
-      console.log('Deleting history:', payload);
-      const result = await apiPost(payload);
-      console.log('Delete result:', result);
+      await apiPost({ action: 'deleteHistory', id: h.id });
     } catch(e) {
-      console.error('Failed to delete from Sheets:', e);
-      alert('Delete failed: ' + e.message);
+      console.warn('Failed to delete from Sheets:', e);
     }
-  } else {
-    alert('Not connected to database — delete only removed from view.');
   }
 }
 
