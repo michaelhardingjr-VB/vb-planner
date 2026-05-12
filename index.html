@@ -2182,22 +2182,18 @@ async function renderHistory(useCached) {
 
 function loadFromHistory(index) {
   const h = cachedHistory[index];
-  if (!h || !h.drills || !h.drills.length) { alert('No drills in this session.'); return; }
+  if (!h) return;
 
   const allDrills = getAllDrills();
-
-  // Reassemble drill names — old entries used ', ' as delimiter which breaks
-  // drill names that contain commas (e.g. "Serve, Down Ball, Free Ball")
-  // Strategy: greedily match tokens against known drill names
   const knownNames = new Set(allDrills.map(d => d.name.toLowerCase().trim()));
 
+  // Greedy reassembly: joins comma-split tokens back into known drill names
   function reassemble(tokens) {
     const result = [];
     let i = 0;
     while (i < tokens.length) {
-      // Try joining up to 6 tokens to find a match (handles multi-comma names)
       let matched = false;
-      for (let len = Math.min(6, tokens.length - i); len >= 1; len--) {
+      for (let len = Math.min(8, tokens.length - i); len >= 1; len--) {
         const candidate = tokens.slice(i, i + len).join(', ').trim();
         if (knownNames.has(candidate.toLowerCase())) {
           result.push(candidate);
@@ -2206,38 +2202,31 @@ function loadFromHistory(index) {
           break;
         }
       }
-      if (!matched) {
-        // No match found — include as-is and move on
-        result.push(tokens[i].trim());
-        i++;
-      }
+      if (!matched) { i++; } // skip unmatched token
     }
     return result;
   }
 
-  // Determine if this is pipe-delimited (new) or comma-delimited (old)
-  const rawDrills = h.drills; // already split by getPlanHistory
-  const isPipeFormat = rawDrills.length === 1 && rawDrills[0].indexOf(',') > -1
-    ? false  // single item with commas — old format stored as one string
-    : true;  // already properly split
+  // Determine drill names — use raw string to handle old comma-delimited format
+  let drillNames = [];
+  const raw = h.drillsRaw || '';
 
-  let drillNames;
-  if (!isPipeFormat) {
-    // Old format: re-split by comma and reassemble
-    drillNames = reassemble(rawDrills[0].split(',').map(t => t.trim()));
-  } else {
-    // New pipe format or already properly split — try as-is, then reassemble if poor match
-    const directMatches = rawDrills.filter(name =>
-      knownNames.has(name.toLowerCase().trim())
-    );
-    if (directMatches.length < rawDrills.length * 0.5) {
-      // Less than half matched — likely old comma-split format, reassemble
-      drillNames = reassemble(rawDrills);
-    } else {
-      drillNames = rawDrills;
+  if (raw.indexOf('|') > -1) {
+    // New pipe format — already correct
+    drillNames = raw.split('|').map(d => d.trim()).filter(Boolean);
+  } else if (raw) {
+    // Old comma format — reassemble using known drill names
+    const tokens = raw.split(',').map(t => t.trim()).filter(Boolean);
+    drillNames = reassemble(tokens);
+    // Fallback: if reassembly found nothing, try the pre-split array
+    if (!drillNames.length && h.drills && h.drills.length) {
+      drillNames = h.drills;
     }
+  } else {
+    drillNames = h.drills || [];
   }
 
+  if (!drillNames.length) { alert('No drills found in this session.'); return; }
   if (!confirm(`Load practice from ${h.date}? (${drillNames.length} drills)\nThis will replace your current plan.`)) return;
 
   const loaded = [];
