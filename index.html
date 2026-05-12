@@ -2185,22 +2185,31 @@ function loadFromHistory(index) {
   if (!h || !h.drills || !h.drills.length) { alert('No drills in this session.'); return; }
   if (!confirm(`Load practice from ${h.date}? (${h.drills.length} drills)\nThis will replace your current plan.`)) return;
 
+  const allDrills = getAllDrills();
   const loaded = [];
-  const missing = [];
+
+  // Build a lookup map for fuzzy matching (handles old comma-split names)
+  const drillMap = {};
+  allDrills.forEach(d => { drillMap[d.name.toLowerCase().trim()] = d; });
+
   h.drills.forEach(name => {
-    const drill = getAllDrills().find(d => d.name === name);
+    name = name.trim();
+    if (!name) return;
+    // Try exact match first, then case-insensitive
+    const drill = allDrills.find(d => d.name === name)
+                || drillMap[name.toLowerCase()];
     if (drill) loaded.push({ ...drill, planDur: drill.dur });
-    else missing.push(name);
+    // Silently skip missing drills — no annoying alert
   });
 
+  if (!loaded.length) { alert('No matching drills found for this session.'); return; }
+
   plan = loaded;
-  if (h.startTime) document.getElementById('start-time').value = h.startTime;
+  if (h.startTime && /^\d{1,2}:\d{2}$/.test(h.startTime)) {
+    document.getElementById('start-time').value = h.startTime;
+  }
   render();
   renderPlan();
-
-  if (missing.length) alert(`Note: ${missing.length} drill(s) not found: ${missing.join(', ')}`);
-
-  // Switch to drill library tab so they can review and adjust
   setTab('drills');
 }
 
